@@ -1,10 +1,66 @@
-# Python
-backend/.venv/
+# Environment variables & secrets (NEVER commit secrets!)
+.env
+.env*.local
+.env.development
+.env.production
+.env.test
+*.env
 backend/.env
+frontend/.env*
+!backend/.env.example
+!frontend/.env.example
+
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+backend/.venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Node
+# Node.js & Next.js
+node_modules/
 frontend/node_modules/
+.next/
 frontend/.next/
+out/
 frontend/out/
+.pnp
+.pnp.js
+coverage/
+.vercel/
+
+# TypeScript & Debug logs
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Operating System & IDEs
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
