@@ -84,12 +84,13 @@ export default function Home() {
   // Report state
   const [report, setReport] = useState<ReportData | null>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   // Auto-scroll ref
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Automatically scroll to bottom whenever messages change or when AI is thinking
+  // Scroll to bottom whenever messages change or AI is thinking
   useEffect(() => {
     if (screen === "interview") {
       chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -137,7 +138,7 @@ export default function Home() {
                 : JSON.stringify(errData.detail);
           }
         } catch {
-          // ignore json parse error
+          // ignore
         }
         throw new Error(errorDetail);
       }
@@ -160,10 +161,12 @@ export default function Home() {
     }
   };
 
-  // 2. Fetch Report (Reusable helper)
-  const fetchReport = async (conversationMessages: ChatMessage[]) => {
+  // 2. Fetch Report (Takes candidate directly to report view with loading/error retry)
+  const fetchReport = async (conversationMessages?: ChatMessage[]) => {
+    const msgsToEvaluate = conversationMessages || messages;
+    setScreen("report");
     setIsGeneratingReport(true);
-    setChatError(null);
+    setReportError(null);
 
     try {
       const res = await fetch(`${API_BASE_URL}/interview/report`, {
@@ -172,7 +175,7 @@ export default function Home() {
         body: JSON.stringify({
           topic: topic.trim(),
           difficulty: difficulty,
-          messages: conversationMessages,
+          messages: msgsToEvaluate,
         }),
       });
 
@@ -194,12 +197,15 @@ export default function Home() {
 
       const reportData: ReportData = await res.json();
       setReport(reportData);
-      setScreen("report");
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setChatError(`Report Generation Error: ${err.message}`);
+      if (err instanceof TypeError && err.message.includes("fetch")) {
+        setReportError(
+          `Cannot connect to backend server at ${API_BASE_URL}. Make sure your FastAPI server is running.`
+        );
+      } else if (err instanceof Error) {
+        setReportError(err.message);
       } else {
-        setChatError("Failed to generate report. Please try again.");
+        setReportError("An unexpected error occurred while generating the report.");
       }
     } finally {
       setIsGeneratingReport(false);
@@ -227,7 +233,7 @@ export default function Home() {
         body: JSON.stringify({
           topic: topic.trim(),
           difficulty: difficulty,
-          messages: messages, // Send history before this answer (per backend endpoint contract)
+          messages: messages, // Send history before this answer per backend contract
           answer: cleanAnswer,
         }),
       });
@@ -252,16 +258,15 @@ export default function Home() {
       setMessages(data.messages);
       setIsThinking(false);
 
-      // Check if interviewer ended the interview
+      // If interviewer ends the interview, automatically transition to report screen
       if (data.interview_ended) {
-        // Automatically fetch report and transition to report screen
         await fetchReport(data.messages);
       }
     } catch (err: unknown) {
       setIsThinking(false);
       // Restore input text so candidate doesn't lose their answer
       setInputAnswer(cleanAnswer);
-      // Remove optimistic candidate message on failure
+      // Rollback optimistic message on failure
       setMessages(messages);
 
       if (err instanceof Error) {
@@ -272,7 +277,7 @@ export default function Home() {
     }
   };
 
-  // Keydown handler: Enter to send, Shift+Enter for newline
+  // Keydown: Enter sends, Shift+Enter for newline
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       if (e.nativeEvent.isComposing) return;
@@ -281,7 +286,7 @@ export default function Home() {
     }
   };
 
-  // Reset to setup
+  // Reset to initial setup
   const handleReset = () => {
     setScreen("setup");
     setMessages([]);
@@ -290,11 +295,45 @@ export default function Home() {
     setChatError(null);
     setSetupError(null);
     setReport(null);
+    setReportError(null);
+    setIsGeneratingReport(false);
+  };
+
+  // Score color helper: Good (>=70), Okay (55-69), Weak (<55)
+  const getScoreDetails = (score: number) => {
+    if (score >= 70) {
+      return {
+        category: "Good",
+        colorClass: "text-emerald-400",
+        borderClass: "border-emerald-500/40",
+        bgClass: "bg-emerald-950/20",
+        badgeBg: "bg-emerald-500/10 text-emerald-300 border-emerald-500/30",
+        barColor: "bg-emerald-500",
+      };
+    }
+    if (score >= 55) {
+      return {
+        category: "Okay",
+        colorClass: "text-amber-400",
+        borderClass: "border-amber-500/40",
+        bgClass: "bg-amber-950/20",
+        badgeBg: "bg-amber-500/10 text-amber-300 border-amber-500/30",
+        barColor: "bg-amber-500",
+      };
+    }
+    return {
+      category: "Weak",
+      colorClass: "text-rose-400",
+      borderClass: "border-rose-500/40",
+      bgClass: "bg-rose-950/20",
+      badgeBg: "bg-rose-500/10 text-rose-300 border-rose-500/30",
+      barColor: "bg-rose-500",
+    };
   };
 
   return (
     <div className="relative min-h-screen bg-[#09090b] text-zinc-100 flex flex-col items-center justify-start antialiased selection:bg-indigo-500/30 selection:text-indigo-200 overflow-x-hidden">
-      {/* Subtle ambient backdrop */}
+      {/* Ambient background glow */}
       <div className="pointer-events-none fixed inset-0 flex items-center justify-center opacity-25">
         <div className="h-[600px] w-[600px] rounded-full bg-gradient-to-tr from-indigo-600/40 via-purple-600/30 to-blue-500/20 blur-[140px]" />
       </div>
@@ -540,39 +579,21 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Right: Exit / End controls */}
+              {/* Right: Manual End/Report & Exit */}
               <div className="flex items-center gap-2 sm:gap-3">
-                {isGeneratingReport ? (
-                  <span className="text-xs text-indigo-400 flex items-center gap-1.5 bg-indigo-950/40 px-3 py-1.5 rounded-lg border border-indigo-500/30">
-                    <svg
-                      className="w-3.5 h-3.5 animate-spin"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                    Generating report...
-                  </span>
-                ) : (
-                  <button
-                    onClick={handleReset}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 transition cursor-pointer"
-                  >
-                    Exit Session
-                  </button>
-                )}
+                <button
+                  onClick={() => fetchReport(messages)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 transition cursor-pointer"
+                  title="Conclude interview early and generate evaluation"
+                >
+                  End & View Report
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 transition cursor-pointer"
+                >
+                  Exit Session
+                </button>
               </div>
             </div>
           </header>
@@ -653,37 +674,6 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Report Generation Transition Banner */}
-              {isGeneratingReport && (
-                <div className="w-full my-4 p-5 rounded-2xl bg-indigo-950/30 border border-indigo-500/30 text-center flex flex-col items-center gap-2 shadow-lg">
-                  <div className="flex items-center gap-2 text-indigo-300 font-semibold text-sm">
-                    <svg
-                      className="w-4 h-4 animate-spin text-indigo-400"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                    >
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      />
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      />
-                    </svg>
-                    <span>Interview Completed</span>
-                  </div>
-                  <p className="text-xs text-zinc-400">
-                    The interviewer has ended the session. Generating your comprehensive scorecard...
-                  </p>
-                </div>
-              )}
-
               {/* Scroll anchor */}
               <div ref={chatBottomRef} />
             </div>
@@ -699,11 +689,9 @@ export default function Home() {
                   value={inputAnswer}
                   onChange={(e) => setInputAnswer(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  disabled={isThinking || isGeneratingReport}
+                  disabled={isThinking}
                   placeholder={
-                    isGeneratingReport
-                      ? "Interview has concluded..."
-                      : isThinking
+                    isThinking
                       ? "Interviewer is evaluating your response..."
                       : "Type your answer... (Enter to send, Shift+Enter for new line)"
                   }
@@ -713,7 +701,7 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={handleSendAnswer}
-                  disabled={isThinking || isGeneratingReport || !inputAnswer.trim()}
+                  disabled={isThinking || !inputAnswer.trim()}
                   className="h-11 px-4 sm:px-5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/30 transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                 >
                   <span>Send</span>
@@ -750,161 +738,325 @@ export default function Home() {
       {/* ========================================================================= */}
       {/* SCREEN 3: REPORT SCREEN                                                   */}
       {/* ========================================================================= */}
-      {screen === "report" && report && (
-        <div className="w-full max-w-3xl px-4 sm:px-6 py-12 flex flex-col gap-6 z-10">
-          <div className="text-center mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400">
-              Evaluation Report
-            </span>
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mt-1">
-              Interview Performance Summary
-            </h2>
-            <p className="text-xs sm:text-sm text-zinc-400 mt-1">
-              Topic: <span className="text-zinc-200 font-medium">{topic}</span> •
-              Difficulty:{" "}
-              <span className="text-zinc-200 font-medium capitalize">
-                {difficulty}
-              </span>
-            </p>
+      {screen === "report" && (
+        <div className="w-full max-w-4xl px-4 sm:px-6 py-10 sm:py-16 flex flex-col items-center z-10">
+          {/* Top navigation row */}
+          <div className="w-full flex items-center justify-between mb-8">
+            <button
+              onClick={() => setScreen("interview")}
+              className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
+              </svg>
+              <span>Back to Conversation</span>
+            </button>
+
+            <button
+              onClick={handleReset}
+              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-semibold border border-zinc-700/80 transition cursor-pointer"
+            >
+              Start New Interview
+            </button>
           </div>
 
-          {/* Scorecard Hero */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-1 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 flex flex-col items-center justify-center text-center">
-              <span className="text-xs text-zinc-400 font-medium">Overall Score</span>
-              <div className="text-5xl font-black text-white my-2 tracking-tight">
-                {report.score}
-                <span className="text-xl font-normal text-zinc-500">/100</span>
+          {/* 3A: LOADING STATE */}
+          {isGeneratingReport && (
+            <div className="w-full max-w-lg rounded-2xl border border-zinc-800 bg-zinc-900/70 p-10 backdrop-blur-xl shadow-2xl flex flex-col items-center text-center gap-6 my-12">
+              <div className="relative flex items-center justify-center">
+                <div className="w-16 h-16 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin" />
+                <div className="absolute w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center">
+                  <svg className="w-4 h-4 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 01-6.23-.693L4.2 13.9" />
+                  </svg>
+                </div>
               </div>
-              <span
-                className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                  report.result === "Pass"
-                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30"
-                    : "bg-red-500/10 text-red-400 border border-red-500/30"
-                }`}
-              >
-                Verdict: {report.result}
-              </span>
-            </div>
 
-            <div className="sm:col-span-2 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 flex flex-col justify-center">
-              <span className="text-xs text-zinc-400 font-medium uppercase tracking-wider">
-                Rating Bracket
-              </span>
-              <div className="text-2xl font-bold text-white capitalize mt-1">
-                {report.verdict}
-              </div>
-              <p className="text-xs text-zinc-400 mt-2 leading-relaxed">
-                {report.score >= 85
-                  ? "Exceptional technical grasp. Clear answers with accurate fundamentals and strong communication."
-                  : report.score >= 70
-                  ? "Good overall grasp. Mostly correct with slight gaps in depth or precision."
-                  : report.score >= 55
-                  ? "Adequate baseline understanding, but several conceptual or architectural gaps were noted."
-                  : "Needs revision. Key questions were unanswered or lacked foundational precision."}
-              </p>
-            </div>
-          </div>
-
-          {/* Strengths & Weaknesses */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Strengths */}
-            <div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-5 flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold">
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-                <span>Strengths Demonstrated</span>
-              </div>
-              {report.strengths.length > 0 ? (
-                <ul className="space-y-2 text-xs text-zinc-300">
-                  {report.strengths.map((str, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="text-emerald-400 font-bold">•</span>
-                      <span>{str}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-zinc-500 italic">
-                  No clear strengths were highlighted in this attempt.
+              <div>
+                <h3 className="text-lg font-bold text-white mb-1.5">
+                  Analyzing Your Interview
+                </h3>
+                <p className="text-xs text-zinc-400 max-w-xs leading-relaxed">
+                  The interviewer is evaluating your technical accuracy, system trade-offs, and compiling strengths and revision topics...
                 </p>
-              )}
-            </div>
-
-            {/* Weaknesses */}
-            <div className="rounded-2xl border border-rose-500/20 bg-rose-950/10 p-5 flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-rose-400 text-sm font-semibold">
-                <svg
-                  className="w-4 h-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
-                  />
-                </svg>
-                <span>Areas for Improvement</span>
               </div>
-              {report.weaknesses.length > 0 ? (
-                <ul className="space-y-2 text-xs text-zinc-300">
-                  {report.weaknesses.map((w, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <span className="text-rose-400 font-bold">•</span>
-                      <span>{w}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-xs text-zinc-500 italic">
-                  No major weaknesses identified.
-                </p>
-              )}
-            </div>
-          </div>
 
-          {/* Topics to Revise */}
-          {report.topics_to_revise.length > 0 && (
-            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col gap-3">
-              <span className="text-xs font-semibold text-zinc-300">
-                Recommended Topics to Revise
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {report.topics_to_revise.map((topicItem, idx) => (
-                  <span
-                    key={idx}
-                    className="text-xs px-3 py-1 rounded-lg bg-zinc-800/80 text-zinc-300 border border-zinc-700/60"
-                  >
-                    {topicItem}
-                  </span>
-                ))}
+              <div className="w-full bg-zinc-800/80 rounded-full h-1.5 overflow-hidden">
+                <div className="bg-indigo-500 h-full w-2/3 animate-pulse rounded-full" />
               </div>
             </div>
           )}
 
-          {/* Action button */}
-          <div className="flex justify-center pt-2">
-            <button
-              onClick={handleReset}
-              className="px-6 py-3 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition cursor-pointer"
-            >
-              Start Another Interview
-            </button>
-          </div>
+          {/* 3B: ERROR STATE WITH RETRY BUTTON */}
+          {!isGeneratingReport && reportError && (
+            <div className="w-full max-w-xl rounded-2xl border border-red-500/40 bg-red-950/20 p-8 backdrop-blur-xl shadow-2xl flex flex-col items-center text-center gap-5 my-8">
+              <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                </svg>
+              </div>
+
+              <div>
+                <h3 className="text-base font-bold text-red-300">
+                  Report Generation Failed
+                </h3>
+                <p className="text-xs text-red-300/80 mt-1 max-w-md leading-relaxed">
+                  {reportError}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={() => fetchReport(messages)}
+                  className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white font-semibold text-xs transition shadow-lg shadow-red-950/40 cursor-pointer flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  <span>Retry Generating Report</span>
+                </button>
+
+                <button
+                  onClick={() => setScreen("interview")}
+                  className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition cursor-pointer"
+                >
+                  Back to Interview
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* 3C: COMPLETE REPORT VIEW */}
+          {!isGeneratingReport && !reportError && report && (
+            <div className="w-full flex flex-col gap-8">
+              {/* Header Title: "Interview Complete" with topic & difficulty */}
+              <div className="text-center flex flex-col items-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 mb-3">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                  Assessment Complete
+                </div>
+                <h1 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+                  Interview Complete
+                </h1>
+                <div className="flex items-center justify-center gap-2 mt-2 text-sm text-zinc-400">
+                  <span>Topic:</span>
+                  <span className="text-zinc-200 font-semibold">{topic}</span>
+                  <span>•</span>
+                  <span>Difficulty:</span>
+                  <span
+                    className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border capitalize ${DIFFICULTY_CONFIG[difficulty].badgeBg}`}
+                  >
+                    {difficulty}
+                  </span>
+                </div>
+              </div>
+
+              {/* Big Scorecard Hero Banner */}
+              {(() => {
+                const scoreInfo = getScoreDetails(report.score);
+                const isPass = report.result === "Pass";
+
+                return (
+                  <div
+                    className={`w-full rounded-3xl border ${scoreInfo.borderClass} ${scoreInfo.bgClass} p-6 sm:p-8 backdrop-blur-xl shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-6`}
+                  >
+                    {/* Score Big Display */}
+                    <div className="flex flex-col items-center sm:items-start">
+                      <span className="text-xs uppercase tracking-wider font-semibold text-zinc-400 mb-1">
+                        Overall Performance Score
+                      </span>
+                      <div className="flex items-baseline gap-2">
+                        <span className={`text-6xl sm:text-7xl font-black tracking-tight ${scoreInfo.colorClass}`}>
+                          {report.score}
+                        </span>
+                        <span className="text-2xl font-medium text-zinc-500">
+                          / 100
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${scoreInfo.badgeBg}`}>
+                          Rating: {scoreInfo.category}
+                        </span>
+                        <span className="text-xs text-zinc-400 capitalize">
+                          ({report.verdict})
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* PASS or FAIL Stamp */}
+                    <div className="flex flex-col items-center sm:items-end gap-2">
+                      <span className="text-xs uppercase tracking-wider font-semibold text-zinc-400">
+                        Final Outcome
+                      </span>
+                      {isPass ? (
+                        <div className="inline-flex items-center gap-2.5 px-6 py-2.5 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/50 text-emerald-300 font-black text-xl tracking-wider uppercase shadow-xl shadow-emerald-950/40">
+                          <svg
+                            className="w-6 h-6 text-emerald-400"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={3}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M4.5 12.75l6 6 9-13.5"
+                            />
+                          </svg>
+                          <span>PASS</span>
+                        </div>
+                      ) : (
+                        <div className="inline-flex items-center gap-2.5 px-6 py-2.5 rounded-2xl bg-rose-500/20 border-2 border-rose-500/50 text-rose-300 font-black text-xl tracking-wider uppercase shadow-xl shadow-rose-950/40">
+                          <svg
+                            className="w-6 h-6 text-rose-400"
+                            fill="none"
+                            viewBox="0 0 24 24"
+                            stroke="currentColor"
+                            strokeWidth={3}
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M6 18L18 6M6 6l12 12"
+                            />
+                          </svg>
+                          <span>FAIL</span>
+                        </div>
+                      )}
+                      <span className="text-[11px] text-zinc-500">
+                        {isPass ? "Exceeded the 55-point passing threshold" : "Below the 55-point passing threshold"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* SECTION 1: Interviewer's Verdict */}
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 backdrop-blur-md flex flex-col gap-3">
+                <div className="flex items-center gap-2 text-indigo-400 font-semibold text-sm">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
+                  </svg>
+                  <span>Interviewer&apos;s Verdict</span>
+                </div>
+                <div className="text-zinc-200 text-sm leading-relaxed">
+                  {report.score >= 85 && (
+                    <p>
+                      <strong>Excellent Performance:</strong> You demonstrated comprehensive technical depth, clear structured reasoning, and accurate explanations for {topic}. Your answers directly addressed architectural constraints and trade-offs.
+                    </p>
+                  )}
+                  {report.score >= 70 && report.score < 85 && (
+                    <p>
+                      <strong>Good Technical Understanding:</strong> You established solid fundamentals and practical intuition for {topic}. Minor follow-up probing exposed a few areas where deeper precision or edge-case handling would strengthen your responses.
+                    </p>
+                  )}
+                  {report.score >= 55 && report.score < 70 && (
+                    <p>
+                      <strong>Adequate Knowledge:</strong> You demonstrated basic conceptual awareness of {topic}, but struggled with deeper architectural details or concrete implementations. Further hands-on practice is recommended.
+                    </p>
+                  )}
+                  {report.score < 55 && (
+                    <p>
+                      <strong>Weak Outcome:</strong> Several foundational concepts in {topic} were missed or incomplete during this interview. Review the suggested revision topics below and retake the session.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* SECTIONS 2 & 3: Strengths and Areas for Improvement Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {/* Strengths Section */}
+                <div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-6 flex flex-col gap-4">
+                  <div className="flex items-center gap-2 text-emerald-400 font-semibold text-sm">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Demonstrated Strengths</span>
+                  </div>
+
+                  {report.strengths.length > 0 ? (
+                    <ul className="space-y-2.5">
+                      {report.strengths.map((str, idx) => (
+                        <li key={idx} className="flex items-start gap-2.5 text-xs text-zinc-200 leading-relaxed">
+                          <span className="text-emerald-400 font-bold shrink-0 mt-0.5">✓</span>
+                          <span>{str}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-zinc-500 italic">
+                      No distinct strengths were identified from the answers provided.
+                    </p>
+                  )}
+                </div>
+
+                {/* Areas for Improvement Section */}
+                <div className="rounded-2xl border border-rose-500/20 bg-rose-950/10 p-6 flex flex-col gap-4">
+                  <div className="flex items-center gap-2 text-rose-400 font-semibold text-sm">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+                    </svg>
+                    <span>Areas for Improvement</span>
+                  </div>
+
+                  {report.weaknesses.length > 0 ? (
+                    <ul className="space-y-2.5">
+                      {report.weaknesses.map((weakness, idx) => (
+                        <li key={idx} className="flex items-start gap-2.5 text-xs text-zinc-200 leading-relaxed">
+                          <span className="text-rose-400 font-bold shrink-0 mt-0.5">✕</span>
+                          <span>{weakness}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-zinc-500 italic">
+                      No significant weaknesses or conceptual gaps were observed.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* SECTION 4: Topics to Revise */}
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 backdrop-blur-md flex flex-col gap-3">
+                <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                  </svg>
+                  <span>Topics to Revise</span>
+                </div>
+
+                {report.topics_to_revise.length > 0 ? (
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {report.topics_to_revise.map((revTopic, idx) => (
+                      <span
+                        key={idx}
+                        className="text-xs px-3.5 py-1.5 rounded-xl bg-zinc-800/90 text-zinc-200 border border-zinc-700/80 font-medium"
+                      >
+                        {revTopic}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500 italic">
+                    All tested topics met the required standard.
+                  </p>
+                )}
+              </div>
+
+              {/* Action Button: Start New Interview */}
+              <div className="flex justify-center pt-4 pb-12">
+                <button
+                  onClick={handleReset}
+                  className="px-8 py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 text-white font-semibold text-sm shadow-xl shadow-indigo-600/30 hover:shadow-indigo-600/50 hover:opacity-95 active:scale-[0.99] transition cursor-pointer flex items-center gap-2"
+                >
+                  <span>Start New Interview</span>
+                  <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
