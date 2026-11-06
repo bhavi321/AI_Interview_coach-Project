@@ -5,7 +5,7 @@ from typing import Literal
 from groq import APIError, Groq
 from pydantic import BaseModel, Field, field_validator
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "openai/gpt-oss-120b"
 
 Difficulty = Literal["easy", "medium", "hard"]
 Verdict = Literal["excellent", "good", "adequate", "weak"]
