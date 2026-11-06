@@ -80,6 +80,30 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
+## ☁️ Cloud Deployment
+
+### Backend on Render (Web Service)
+1. In Render, create a new **Web Service** and connect your GitHub repository.
+2. Configure settings:
+   - **Root Directory**: `backend`
+   - **Runtime**: `Python 3`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+3. Under **Environment Variables**:
+   - `GROQ_API_KEY`: Your Groq API key
+   - (Optional) `ALLOWED_ORIGINS`: Comma-separated domains if using a custom domain (all `*.vercel.app` domains are enabled by default)
+
+### Frontend on Vercel
+1. In Vercel, import your repository.
+2. Configure settings:
+   - **Framework Preset**: Next.js
+   - **Root Directory**: `frontend`
+3. Under **Environment Variables**:
+   - `NEXT_PUBLIC_API_URL`: Your Render backend service URL (e.g., `https://your-backend.onrender.com`)
+4. Deploy!
+
+---
+
 ## 🔒 Security & Environment Variables
 
 - `backend/.env` is ignored by Git and should never be committed.

@@ -24,7 +24,9 @@ interface ReportData {
   result: "Pass" | "Fail";
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Read backend URL from environment (default to localhost for dev) and strip any trailing slash
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = rawApiUrl.replace(/\/+$/, "");
 
 const DIFFICULTY_CONFIG: Record<
   Difficulty,

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+import os
 import sys
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
@@ -41,16 +42,17 @@ async def lifespan(app: FastAPI):
       if key
       else "MISSING (Set GROQ_API_KEY in backend/.env)"
   )
+  port = os.getenv("PORT", "8000")
 
   banner = f"""
 {"=" * 64}
   🎙️  AI Interview Coach - FastAPI Backend Server
 {"=" * 64}
-  • Server URL     : http://localhost:8000
-  • Documentation  : http://localhost:8000/docs
-  • Health Endpoint: http://localhost:8000/health
+  • Server Port    : {port}
   • AI Model       : {MODEL}
   • Groq API Key   : {key_status}
+  • Health Endpoint: /health
+  • Documentation  : /docs
 {"=" * 64}"""
   print(banner, flush=True)
 
@@ -82,10 +84,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration for frontend
+# ---------------------------------------------------------------------------
+# Dynamic CORS Configuration (Localhost + Vercel + Custom Domains)
+# ---------------------------------------------------------------------------
+# Allow explicit domains from environment variables (comma-separated)
+raw_origins = os.getenv("ALLOWED_ORIGINS", os.getenv("FRONTEND_URL", ""))
+explicit_origins = [
+    origin.strip().rstrip("/")
+    for origin in raw_origins.split(",")
+    if origin.strip()
+]
+
+# Regex matches localhost on any port AND all Vercel deployment URLs (*.vercel.app)
+cors_origin_regex = os.getenv(
+    "CORS_ORIGIN_REGEX",
+    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://.*\.vercel\.app$",
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+    allow_origins=explicit_origins if explicit_origins else [],
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -280,3 +299,14 @@ def interview_answer(body: SubmitAnswer):
 def interview_report(request: InterviewRequest):
   """Evaluates the conversation history and generates the structured scorecard."""
   return generate_report(request)
+
+
+# ---------------------------------------------------------------------------
+# Entry point for cloud hosts (e.g., Render, Railway, Heroku)
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+  import uvicorn
+
+  port = int(os.getenv("PORT", 8000))
+  host = os.getenv("HOST", "0.0.0.0")
+  uvicorn.run("main:app", host=host, port=port, reload=False)
